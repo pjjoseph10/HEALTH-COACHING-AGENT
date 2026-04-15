@@ -86,6 +86,8 @@ The app displays before/after evidence after feedback submission so learning cha
 - Progress analytics over all 4 metrics (`agent/progress.py`)
 - Input safety bounds with coaching guidance for rough values
 - Simulator demo mode (5 scripted days) to show autonomous episodes in UI
+- Game-theory strategy selection with payoff matrix + mixed policy (`agent/game_theory.py`)
+- Agent intelligence panel with BDI snapshot and task specification views
 
 ## Quick Validation Checklist
 
@@ -95,6 +97,7 @@ The app displays before/after evidence after feedback submission so learning cha
 - Check Progress tab -> separate trends for steps, sleep, water, exercise.
 - Click "Run 5-day simulation" -> observe automated episode + learning updates.
 - In Coach plan tab -> verify visible utility score, threshold, and weight chart.
+- Open "Agent Intelligence" tab -> inspect BDI model, payoff matrix, and mixed strategy recommendation.
 
 ## Notes
 

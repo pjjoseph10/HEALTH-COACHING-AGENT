@@ -376,7 +376,7 @@ def update_latest_health_feedback(*, user_id: int = 1, feedback: str | None, adh
         SET feedback = ?,
             adherence = ?,
             rating = ?,
-            notes = ?
+            notes = COALESCE(?, notes)
         WHERE id = ?
         """,
         (
@@ -414,6 +414,33 @@ def fetch_recent_health_rows(*, user_id: int = 1, limit: int = 14):
             "adherence": r[4],
             "rating": r[5],
             "date": r[6],
+        }
+        for r in rows
+    ]
+
+
+def fetch_recent_decision_rows(*, user_id: int = 1, limit: int = 40):
+    conn = connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT adherence, rating, utility, notes, date
+        FROM health_data
+        WHERE user_id = ?
+        ORDER BY date DESC
+        LIMIT ?
+        """,
+        (int(user_id), int(limit)),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "adherence": r[0],
+            "rating": r[1],
+            "utility": r[2],
+            "notes": r[3],
+            "date": r[4],
         }
         for r in rows
     ]

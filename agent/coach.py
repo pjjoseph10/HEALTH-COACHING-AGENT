@@ -68,7 +68,7 @@ def _checkin_guardrail_advice(today: dict, coaching: dict) -> list[str]:
     return advice
 
 
-def run_daily_coach(*, user_id: int = 1, today: dict) -> CoachResponse:
+def run_daily_coach(*, user_id: int = 1, today: dict, coaching_strategy: str = "balanced_plan") -> CoachResponse:
     """
     Perception: validate + load memory (profile, targets, last row)
     Reasoning: internal utility + priorities
@@ -95,6 +95,15 @@ def run_daily_coach(*, user_id: int = 1, today: dict) -> CoachResponse:
         threshold=float(learning["threshold"]),
     )
 
+    action_coaching = dict(coaching)
+    strategy = str(coaching_strategy or "balanced_plan").strip().lower()
+    if strategy == "easy_plan":
+        action_coaching["exercise_goal"] = max(10, int(round(int(coaching["exercise_goal"]) * 0.8)))
+        action_coaching["steps_goal"] = max(4000, int(round(int(coaching["steps_goal"]) * 0.9)))
+    elif strategy == "intense_plan":
+        action_coaching["exercise_goal"] = min(90, int(round(int(coaching["exercise_goal"]) * 1.15)))
+        action_coaching["steps_goal"] = min(14000, int(round(int(coaching["steps_goal"]) * 1.1)))
+
     # Act (utility-based): generate a few candidates and choose the best under preferences.
     # We intentionally keep this simple (2 variants) but it closes the loop: action is selected by a utility score.
     def _load_avoid_set(prefs: dict) -> set[str]:
@@ -114,10 +123,10 @@ def run_daily_coach(*, user_id: int = 1, today: dict) -> CoachResponse:
     prefs_block_cardio["avoid_activities"] = json.dumps(sorted(set(base_avoid) | {"cardio"}))
 
     ex_allow = generate_exercise_plan(
-        priorities=priorities, profile=profile, coaching=coaching, today=create, preferences=prefs_allow_cardio
+        priorities=priorities, profile=profile, coaching=action_coaching, today=create, preferences=prefs_allow_cardio
     )
     ex_block = generate_exercise_plan(
-        priorities=priorities, profile=profile, coaching=coaching, today=create, preferences=prefs_block_cardio
+        priorities=priorities, profile=profile, coaching=action_coaching, today=create, preferences=prefs_block_cardio
     )
 
     # Utility score: health utility + preference alignment
@@ -137,7 +146,7 @@ def run_daily_coach(*, user_id: int = 1, today: dict) -> CoachResponse:
     chosen_ex_variant = "allow_cardio" if exercise is ex_allow else "block_cardio"
 
     diet = generate_diet_plan(
-        priorities=priorities, profile=profile, coaching=coaching, today=create, preferences=preferences
+        priorities=priorities, profile=profile, coaching=action_coaching, today=create, preferences=preferences
     )
 
     reminders = generate_reminder(
@@ -183,6 +192,7 @@ def run_daily_coach(*, user_id: int = 1, today: dict) -> CoachResponse:
     # Store today’s check-in (utility is stored for internal monitoring only)
     reflection_payload = {
         "act": {
+            "coaching_strategy": strategy,
             "exercise_variant": chosen_ex_variant,
             "exercise_score_allow": round(float(score_allow), 3),
             "exercise_score_block": round(float(score_block), 3),
@@ -240,7 +250,7 @@ def apply_feedback(*, user_id: int = 1, priorities: list[str], adherence: int | 
         feedback=text,
         adherence=adherence,
         rating=rating,
-        notes=text,
+        notes=None,
     )
 
     # Reflect: compare outcome/feedback with what we actually recommended (stored in notes JSON).

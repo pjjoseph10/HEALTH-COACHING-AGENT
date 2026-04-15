@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from agent.coach import run_daily_coach, apply_feedback
+from agent.game_theory import build_payoff_matrix, choose_mixed_strategy, estimate_outcome_distribution
 from agent.learning import get_learning_state
 from agent.llm import get_llm_status
 from agent.progress import summarize_progress
@@ -12,6 +13,7 @@ from database.db import (
     create_user,
     create_tables,
     fetch_learning_history,
+    fetch_recent_decision_rows,
     fetch_recent_health_rows,
     get_coaching_state,
     get_user_profile,
@@ -39,6 +41,8 @@ if "feedback_status" not in st.session_state:
     st.session_state.feedback_status = None
 if "demo_results" not in st.session_state:
     st.session_state.demo_results = []
+if "ab_results" not in st.session_state:
+    st.session_state.ab_results = []
 
 with st.sidebar:
     st.subheader("User")
@@ -113,11 +117,27 @@ with st.sidebar:
     st.metric("Exercise goal", f'{coaching["exercise_goal"]} min')
     st.metric("Streak", f'{coaching["streak"]} days')
 
-tab_checkin, tab_plan, tab_progress = st.tabs(["📝 Daily check‑in", "🧠 Coach plan", "📈 Progress"])
+decision_rows = fetch_recent_decision_rows(user_id=active_user_id, limit=50)
+payoff_matrix = build_payoff_matrix(decision_rows)
+outcome_dist = estimate_outcome_distribution(decision_rows)
+strategy_meta = choose_mixed_strategy(payoff_matrix, outcome_dist)
+strategy_label_to_value = {
+    "Easy plan": "easy_plan",
+    "Balanced plan": "balanced_plan",
+    "Intense plan": "intense_plan",
+}
+value_to_strategy_label = {v: k for k, v in strategy_label_to_value.items()}
+recommended_strategy = strategy_meta["recommended"]
+recommended_strategy_label = value_to_strategy_label.get(recommended_strategy, "Balanced plan")
+
+tab_checkin, tab_plan, tab_progress, tab_intelligence = st.tabs(
+    ["📝 Daily check‑in", "🧠 Coach plan", "📈 Progress", "🤖 Agent Intelligence"]
+)
 
 with tab_checkin:
     st.subheader("Daily check‑in (perception)")
     st.caption("Enter today’s values and generate a personalized action plan.")
+    st.info(f"Game-theory recommended strategy today: **{recommended_strategy_label}**")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         steps = st.number_input("Steps", 0, 100000, value=0)
@@ -127,6 +147,13 @@ with tab_checkin:
         water = st.number_input("Water (glasses)", 0, 50, value=0)
     with c4:
         exercise = st.number_input("Exercise (minutes)", 0, 720, value=0)
+    selected_strategy_label = st.selectbox(
+        "Plan strategy for today",
+        options=list(strategy_label_to_value.keys()),
+        index=list(strategy_label_to_value.keys()).index(recommended_strategy_label),
+        help="Game-theory module recommends one strategy, but you can override it for this run.",
+    )
+    selected_strategy = strategy_label_to_value[selected_strategy_label]
 
     if st.button("Coach me today", type="primary"):
         raw_today = {"steps": steps, "sleep": sleep, "water": water, "exercise": exercise}
@@ -147,7 +174,8 @@ with tab_checkin:
 
         resp = run_daily_coach(
             user_id=active_user_id,
-            today=raw_today
+            today=raw_today,
+            coaching_strategy=selected_strategy,
         )
         st.session_state.last_response = resp
         st.success("Plan generated. Go to the Coach plan tab.")
@@ -168,6 +196,7 @@ with tab_checkin:
             resp = run_daily_coach(
                 user_id=active_user_id,
                 today={k: day[k] for k in ["steps", "sleep", "water", "exercise"]},
+                coaching_strategy=recommended_strategy,
             )
             updated = apply_feedback(
                 user_id=active_user_id,
@@ -192,6 +221,26 @@ with tab_checkin:
     if st.session_state.demo_results:
         st.write("**Latest simulation run (5 days):**")
         st.dataframe(pd.DataFrame(st.session_state.demo_results), use_container_width=True)
+
+    st.divider()
+    st.subheader("Policy A/B simulation comparison")
+    st.caption("Compares baseline policy (always balanced) vs game-theory mixed strategy policy.")
+    if st.button("Run A/B comparison"):
+        base_payoff = float(strategy_meta["expected_payoff"].get("balanced_plan", 0.0))
+        mixed_probs = strategy_meta["strategy_probs"]
+        game_payoff = sum(
+            float(mixed_probs.get(s, 0.0)) * float(strategy_meta["expected_payoff"].get(s, 0.0))
+            for s in ["easy_plan", "balanced_plan", "intense_plan"]
+        )
+        st.session_state.ab_results = [
+            {"policy": "Baseline (balanced only)", "expected_payoff": round(base_payoff, 3)},
+            {"policy": "Game-theory mixed policy", "expected_payoff": round(game_payoff, 3)},
+        ]
+        st.success("A/B comparison generated.")
+    if st.session_state.ab_results:
+        ab_df = pd.DataFrame(st.session_state.ab_results).set_index("policy")
+        st.bar_chart(ab_df)
+        st.dataframe(pd.DataFrame(st.session_state.ab_results), use_container_width=True)
 
 with tab_plan:
     st.subheader("Coach plan (reasoning → action)")
@@ -379,3 +428,77 @@ with tab_progress:
         st.line_chart(ldf[["steps", "sleep", "water", "exercise"]])
         st.caption("Threshold adaptation over time")
         st.line_chart(ldf[["threshold"]])
+
+with tab_intelligence:
+    st.subheader("Intelligent agent internals")
+    st.caption("Shows syllabus-aligned views: BDI model, task specifications, and game-theory payoff reasoning.")
+
+    learning_state = get_learning_state(user_id=active_user_id)
+    latest_rows_for_bdi = fetch_recent_health_rows(user_id=active_user_id, limit=7)
+    latest_stats = {}
+    if latest_rows_for_bdi:
+        bdi_summary = summarize_progress(list(reversed(latest_rows_for_bdi)), coaching=get_coaching_state(user_id=active_user_id))
+        latest_stats = (bdi_summary.stats or {}).get("last7_avg", {}) or {}
+
+    st.write("### BDI snapshot")
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        st.markdown("**Beliefs**")
+        st.write(
+            {
+                "last_7day_avg": latest_stats,
+                "trend_data_points": len(latest_rows_for_bdi),
+                "weights": learning_state.get("weights", {}),
+            }
+        )
+    with b2:
+        st.markdown("**Desires**")
+        st.write(
+            {
+                "target_goals": get_coaching_state(user_id=active_user_id),
+                "desired_outcomes": ["high adherence", "stable utility growth", "lower failure_count"],
+            }
+        )
+    with b3:
+        st.markdown("**Intentions**")
+        st.write(
+            {
+                "today_recommended_strategy": recommended_strategy,
+                "current_threshold": learning_state.get("threshold"),
+                "priority_policy": "focus dimensions below threshold * personalized goal",
+            }
+        )
+
+    st.divider()
+    st.write("### Task specification")
+    st.markdown("**Utility task specification (soft objective)**")
+    st.write("Maximize weighted utility from steps, sleep, water, and exercise while maintaining adherence.")
+    st.markdown("**Predicate task specification (hard constraints)**")
+    st.write(
+        {
+            "input_safety_bounds": INPUT_LIMITS,
+            "planning_constraints": [
+                "respect injury/avoid-activity preferences",
+                "preserve minimum safe activity goals",
+                "fallback to deterministic message if LLM unavailable",
+            ],
+        }
+    )
+
+    st.divider()
+    st.write("### Game-theory payoff matrix")
+    matrix_df = pd.DataFrame(payoff_matrix).T.reset_index().rename(columns={"index": "strategy"})
+    st.dataframe(matrix_df, use_container_width=True)
+
+    st.write("### Mixed strategy recommendation")
+    strat_prob_df = pd.DataFrame(
+        [{"strategy": k, "probability": round(float(v), 4)} for k, v in strategy_meta["strategy_probs"].items()]
+    ).set_index("strategy")
+    st.bar_chart(strat_prob_df)
+    st.write(
+        {
+            "recommended_strategy": strategy_meta["recommended"],
+            "expected_payoff": strategy_meta["expected_payoff"],
+            "estimated_user_outcomes": outcome_dist,
+        }
+    )
