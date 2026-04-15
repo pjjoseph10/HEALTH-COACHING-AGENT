@@ -1,5 +1,0 @@
-streamlit
-pandas
-python-dotenv
-google-generativeai
-sqlite-utils
