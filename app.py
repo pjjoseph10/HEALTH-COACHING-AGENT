@@ -12,6 +12,7 @@ from agent.utility import validate_input, INPUT_LIMITS
 from database.db import (
     create_user,
     create_tables,
+    delete_user,
     fetch_learning_history,
     fetch_recent_decision_rows,
     fetch_recent_health_rows,
@@ -72,6 +73,23 @@ with st.sidebar:
         else:
             st.warning("Enter a name first.")
 
+    can_delete = len(user_ids) > 1
+    delete_label = user_labels.get(st.session_state.active_user_id, "User")
+    if st.button("Delete active user", disabled=not can_delete):
+        if not can_delete:
+            st.warning("At least one user must remain.")
+        else:
+            deleted_id = int(st.session_state.active_user_id)
+            if delete_user(deleted_id):
+                refreshed_users = list_users()
+                if refreshed_users:
+                    st.session_state.active_user_id = int(refreshed_users[0]["id"])
+                st.session_state.last_response = None
+                st.success(f"Deleted user: {delete_label}")
+                st.rerun()
+            else:
+                st.error("Could not delete user.")
+
     st.divider()
     st.subheader("Your profile (for personalization)")
     active_user_id = int(st.session_state.active_user_id)
@@ -83,7 +101,7 @@ with st.sidebar:
     height_cm = st.number_input("Height (cm)", min_value=0.0, max_value=250.0, value=float(profile.get("height_cm") or 0.0))
     weight_kg = st.number_input("Weight (kg)", min_value=0.0, max_value=400.0, value=float(profile.get("weight_kg") or 0.0))
     goal = st.selectbox("Goal", options=["general_fitness", "fat_loss", "muscle_gain", "strength", "endurance"], index=["general_fitness", "fat_loss", "muscle_gain", "strength", "endurance"].index(profile.get("goal") or "general_fitness"))
-    dietary_preference = st.text_input("Diet preference (e.g., veg/vegan/halal)", value=profile.get("dietary_preference", ""))
+    dietary_preference = st.text_input("Diet preference (e.g., veg/non-veg)", value=profile.get("dietary_preference", ""))
     allergies = st.text_input("Allergies/intolerances", value=profile.get("allergies", ""))
     injuries = st.text_input("Injuries/limitations", value=profile.get("injuries", ""))
     equipment = st.text_input("Equipment (gym/dumbbells/bands/none)", value=profile.get("equipment", ""))
@@ -137,7 +155,6 @@ tab_checkin, tab_plan, tab_progress, tab_intelligence = st.tabs(
 with tab_checkin:
     st.subheader("Daily check‑in (perception)")
     st.caption("Enter today’s values and generate a personalized action plan.")
-    st.info(f"Game-theory recommended strategy today: **{recommended_strategy_label}**")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         steps = st.number_input("Steps", 0, 100000, value=0)
@@ -221,26 +238,6 @@ with tab_checkin:
     if st.session_state.demo_results:
         st.write("**Latest simulation run (5 days):**")
         st.dataframe(pd.DataFrame(st.session_state.demo_results), use_container_width=True)
-
-    st.divider()
-    st.subheader("Policy A/B simulation comparison")
-    st.caption("Compares baseline policy (always balanced) vs game-theory mixed strategy policy.")
-    if st.button("Run A/B comparison"):
-        base_payoff = float(strategy_meta["expected_payoff"].get("balanced_plan", 0.0))
-        mixed_probs = strategy_meta["strategy_probs"]
-        game_payoff = sum(
-            float(mixed_probs.get(s, 0.0)) * float(strategy_meta["expected_payoff"].get(s, 0.0))
-            for s in ["easy_plan", "balanced_plan", "intense_plan"]
-        )
-        st.session_state.ab_results = [
-            {"policy": "Baseline (balanced only)", "expected_payoff": round(base_payoff, 3)},
-            {"policy": "Game-theory mixed policy", "expected_payoff": round(game_payoff, 3)},
-        ]
-        st.success("A/B comparison generated.")
-    if st.session_state.ab_results:
-        ab_df = pd.DataFrame(st.session_state.ab_results).set_index("policy")
-        st.bar_chart(ab_df)
-        st.dataframe(pd.DataFrame(st.session_state.ab_results), use_container_width=True)
 
 with tab_plan:
     st.subheader("Coach plan (reasoning → action)")
@@ -485,20 +482,6 @@ with tab_intelligence:
         }
     )
 
-    st.divider()
-    st.write("### Game-theory payoff matrix")
-    matrix_df = pd.DataFrame(payoff_matrix).T.reset_index().rename(columns={"index": "strategy"})
-    st.dataframe(matrix_df, use_container_width=True)
-
-    st.write("### Mixed strategy recommendation")
-    strat_prob_df = pd.DataFrame(
-        [{"strategy": k, "probability": round(float(v), 4)} for k, v in strategy_meta["strategy_probs"].items()]
-    ).set_index("strategy")
-    st.bar_chart(strat_prob_df)
-    st.write(
-        {
-            "recommended_strategy": strategy_meta["recommended"],
-            "expected_payoff": strategy_meta["expected_payoff"],
-            "estimated_user_outcomes": outcome_dist,
-        }
-    )
+    # Hidden for simplified UI:
+    # - Game-theory payoff matrix
+    # - Mixed strategy recommendation

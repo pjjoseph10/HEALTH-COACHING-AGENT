@@ -305,6 +305,42 @@ def create_user(display_name: str) -> int:
     conn.close()
     return int(user_id)
 
+
+def delete_user(user_id: int) -> bool:
+    """
+    Delete a user and all associated rows.
+    Returns True if a user row was deleted.
+    """
+    uid = int(user_id)
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = int(cur.fetchone()[0] or 0)
+    if total_users <= 1:
+        conn.close()
+        return False
+
+    cur.execute("SELECT id FROM users WHERE id = ?", (uid,))
+    exists = cur.fetchone()
+    if not exists:
+        conn.close()
+        return False
+
+    # No FK cascade is defined on existing schema, so delete explicitly.
+    cur.execute("DELETE FROM health_data WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM learning_history WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM learning_state WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM user_profile WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM coaching_state WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM user_preferences WHERE user_id = ?", (uid,))
+    cur.execute("DELETE FROM users WHERE id = ?", (uid,))
+
+    deleted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return bool(deleted)
+
 def get_latest_health_row(*, user_id: int = 1):
     conn = connect()
     cur = conn.cursor()

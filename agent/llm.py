@@ -10,6 +10,14 @@ except Exception:  # pragma: no cover - optional runtime dependency behavior
     genai = None
 
 
+MODEL_CANDIDATES = (
+    os.getenv("GEMINI_MODEL", "").strip(),
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+)
+
+
 def build_llm_motivation(
     *,
     user_name: str,
@@ -30,7 +38,6 @@ def build_llm_motivation(
 
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
         focus = ", ".join(priorities) if priorities else "maintenance and consistency"
         prompt = (
             "You are a concise health coach.\n"
@@ -43,9 +50,18 @@ def build_llm_motivation(
             "Tone: practical, encouraging, not preachy.\n"
             "No medical claims, no diagnosis, no hashtags."
         )
-        response = model.generate_content(prompt)
-        text = (getattr(response, "text", "") or "").strip()
-        return text if text else fallback_message
+        for model_name in MODEL_CANDIDATES:
+            if not model_name:
+                continue
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                text = (getattr(response, "text", "") or "").strip()
+                if text:
+                    return text
+            except Exception:
+                continue
+        return fallback_message
     except Exception:
         return fallback_message
 
@@ -60,4 +76,4 @@ def get_llm_status() -> tuple[bool, str]:
         return False, "LLM package unavailable (fallback mode)"
     if not api_key:
         return False, "GOOGLE_API_KEY missing (fallback mode)"
-    return True, "Gemini configured (live mode)"
+    return True, "Gemini key detected (live call attempted, fallback on API/model errors)"
